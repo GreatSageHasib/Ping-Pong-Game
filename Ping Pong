@@ -18,266 +18,400 @@ void setColor(int color) {
     SetConsoleTextAttribute(console, color);
 }
 
-void drawWalls() {
-    setColor(7);
-    for (int i = 0; i < 42; i++) {
-        gotoxy(i, 0); cout << "#";
-        gotoxy(i, 24); cout << "#";
-    }
-    for (int i = 0; i < 25; i++) {
-        gotoxy(0, i); cout << "#";
-        gotoxy(41, i); cout << "#";
-    }
+// ---------------- Game Settings ----------------
+struct GameSettings {
+    int ballSpeed;   // delay in ms, lower is faster
+    int lives;
+    bool soundOn;
+} settings;
+
+void loadDefaultSettings() {
+    settings.ballSpeed = 25; // default speed
+    settings.lives = 5;      // default lives
+    settings.soundOn = true;  // sound on by default
 }
 
-void drawBricks(vector<vector<int>>& bricks) {
-    int rows = bricks.size();
-    int cols = bricks[0].size();
-    for (int y = 0; y < rows; y++) {
-        for (int x = 0; x < cols; x++) {
-            if (bricks[y][x] > 0) {
-                setColor(9 + y);
-                gotoxy(2 + x*4, 2 + y*2);
-                cout << "####";
-            } else {
-                gotoxy(2 + x*4, 2 + y*2);
-                cout << "    ";
-            }
-        }
-    }
-}
-
-struct TrailPos { int x, y, color; };
-
-// ---------------- High Score System ----------------
-struct ScoreEntry {
-    string name;
-    int score;
-};
-
+// ---------------- Score System ----------------
+struct ScoreEntry { string name; int score; };
 vector<ScoreEntry> highScores;
 
 void loadHighScores() {
     highScores.clear();
     ifstream file("highscore.txt");
     string name; int s;
-    while(file >> name >> s) {
-        highScores.push_back({name, s});
-    }
+    while(file >> name >> s) highScores.push_back({name,s});
     file.close();
-
-    sort(highScores.begin(), highScores.end(), [](ScoreEntry a, ScoreEntry b){
-        return a.score > b.score;   // sort descending
-    });
-
-    if(highScores.size() > 5) highScores.resize(5);
+    sort(highScores.begin(), highScores.end(), [](ScoreEntry a, ScoreEntry b){return a.score>b.score;});
+    if(highScores.size()>5) highScores.resize(5);
 }
 
 void saveHighScores() {
     ofstream file("highscore.txt");
-    for(auto &entry : highScores) {
-        file << entry.name << " " << entry.score << "\n";
-    }
+    for(auto &entry:highScores) file << entry.name << " " << entry.score << "\n";
     file.close();
 }
 
-void updateHighScores(string playerName, int score) {
-    highScores.push_back({playerName, score});
-    sort(highScores.begin(), highScores.end(), [](ScoreEntry a, ScoreEntry b){
-        return a.score > b.score;
-    });
-    if(highScores.size() > 5) highScores.resize(5);
+void updateHighScores(string playerName,int score){
+    highScores.push_back({playerName,score});
+    sort(highScores.begin(), highScores.end(), [](ScoreEntry a, ScoreEntry b){return a.score>b.score;});
+    if(highScores.size()>5) highScores.resize(5);
     saveHighScores();
+}
+
+void resetHighScores() {
+    system("cls"); setColor(12);
+    cout << "\n\n\n\t⚠ Are you sure you want to RESET all high scores? (Y/N): ";
+    char choice=_getch();
+    if(choice=='y'||choice=='Y'){
+        highScores.clear();
+        ofstream file("highscore.txt", ios::trunc); file.close();
+        cout << "\n\n\t✅ All high scores have been RESET!";
+    } else cout << "\n\n\t❌ Reset canceled. No data deleted.";
+    cout << "\n\n\tPress any key to return to menu..."; _getch();
 }
 
 void showHighScores() {
     system("cls");
-    cout << "🏆 TOP 5 HIGH SCORES 🏆\n\n";
-    for(int i=0; i<highScores.size(); i++) {
-        cout << i+1 << ". " << highScores[i].name << " - " << highScores[i].score << "\n";
+    cout << "\n\n\t🏆 TOP 5 HIGH SCORES 🏆\n\n";
+    for(int i=0;i<highScores.size();i++) cout << "\t" << i+1 << ". " << highScores[i].name << " - " << highScores[i].score << "\n";
+    if(highScores.empty()) cout << "\tNo scores yet!\n";
+    cout << "\n\tPress any key to return to menu..."; _getch();
+}
+
+// ---------------- Save/Resume Structures ----------------
+struct GameState {
+    int level;
+    int score;
+    int lives;
+    double multiplier;
+    int paddleX;
+    int ballX;
+    int ballY;
+    int ballDirX;
+    int ballDirY;
+};
+
+bool hasSavedGame = false;
+GameState savedState;
+vector<vector<int>> savedBricks;
+
+bool loadSavedGameFromFile() {
+    ifstream f("savegame.txt");
+    if(!f.good()) return false;
+    GameState s;
+    int rows, cols;
+    if(!(f >> s.level >> s.score >> s.lives >> s.multiplier >> s.paddleX >> s.ballX >> s.ballY >> s.ballDirX >> s.ballDirY))
+        return false;
+    if(!(f >> rows >> cols)) return false;
+    savedBricks.assign(rows, vector<int>(cols,0));
+    for(int r=0;r<rows;r++)
+        for(int c=0;c<cols;c++)
+            f >> savedBricks[r][c];
+    f.close();
+    savedState = s;
+    hasSavedGame = true;
+    return true;
+}
+
+bool saveGameToFile(const GameState &s, const vector<vector<int>> &bricks) {
+    ofstream f("savegame.txt", ios::trunc);
+    if(!f) return false;
+    int rows = (int)bricks.size();
+    int cols = (rows>0)?(int)bricks[0].size():0;
+    f << s.level << " " << s.score << " " << s.lives << " " << s.multiplier << " "
+      << s.paddleX << " " << s.ballX << " " << s.ballY << " "
+      << s.ballDirX << " " << s.ballDirY << "\n";
+    f << rows << " " << cols << "\n";
+    for(int r=0;r<rows;r++){
+        for(int c=0;c<cols;c++) f << bricks[r][c] << " ";
+        f << "\n";
     }
-    if(highScores.empty()) cout << "No scores yet!\n";
-    cout << "\nPress any key to return to menu...";
-    _getch();
+    f.close();
+    return true;
+}
+
+void clearSavedGameFile() {
+    ofstream f("savegame.txt", ios::trunc);
+    f.close();
+    hasSavedGame = false;
+    savedBricks.clear();
 }
 
 // ---------------- HUD ----------------
-void drawHUD(int level, int score, float multiplier, int lives) {
+void drawHUD(int level,int score,double multiplier,int lives){
     setColor(15);
     gotoxy(0,25);
     cout << "Level: " << level << "    Score: " << score
          << "    Lives: " << lives << "    Multiplier: x" << multiplier;
 }
 
-// ---------------- Homepage ----------------
-int showHomepage() {
-    string menu[4] = { "START GAME", "INSTRUCTIONS", "HIGH SCORES", "EXIT" };
-    int selection = 0;
-    while (true) {
-        system("cls");
-        gotoxy(10,2); setColor(14); cout << "🎮 P I N G - P O N G   M A S T E R 🎮";
+// ---------------- Drawing Helpers ----------------
+void drawWalls() {
+    setColor(7);
+    for(int i=0;i<42;i++){ gotoxy(i,0); cout<<"#"; gotoxy(i,24); cout<<"#"; }
+    for(int i=0;i<25;i++){ gotoxy(0,i); cout<<"#"; gotoxy(41,i); cout<<"#"; }
+}
 
-        for (int i = 0; i < 4; i++) {
-            gotoxy(20, 6 + i*2);
-            if (i == selection) {
-                setColor(11);
-                cout << "► " << menu[i];
-            } else {
-                setColor(7);
-                cout << "   " << menu[i];
-            }
+void drawBricks(vector<vector<int>> &bricks){
+    int rows = bricks.size();
+    int cols = bricks[0].size();
+    for(int y=0;y<rows;y++){
+        for(int x=0;x<cols;x++){
+            if(bricks[y][x]>0){ setColor(9+y); gotoxy(2+x*4,2+y*2); cout<<"####"; }
+            else{ gotoxy(2+x*4,2+y*2); cout<<"    "; }
         }
-        setColor(7);
-        gotoxy(10, 15); cout << "Use W/S to navigate | Enter to select";
+    }
+}
 
+// ---------------- Homepage ----------------
+int showHomepage(){
+    int selection = 0;
+    int color = 11;
+    bool needRedraw = true;
+    system("mode con: cols=100 lines=35");
+    system("cls");
+    int centerX = 45;
+
+    // Dynamic menu
+    vector<string> menu;
+    int resumeIndex = -1, newIndex = -1;
+    if(hasSavedGame){
+        menu.push_back("RESUME SAVED GAME");
+        resumeIndex = 0;
+        menu.push_back("START NEW GAME");
+        newIndex = 1;
+    } else {
+        menu.push_back("START NEW GAME");
+        newIndex = 0;
+    }
+    menu.push_back("INSTRUCTIONS");
+    menu.push_back("HIGH SCORES");
+    menu.push_back("RESET HIGH SCORES");
+    menu.push_back("SETTINGS");
+    menu.push_back("EXIT");
+
+    while(true){
+        if(needRedraw){
+            setColor(14);
+            gotoxy(centerX-18,4); cout << "╔════════════════════════════════════════════╗";
+            gotoxy(centerX-18,5); cout << "║         🎮  P I N G  -  P O N G  M A S T E R  🎮         ║";
+            gotoxy(centerX-18,6); cout << "╚════════════════════════════════════════════╝";
+            setColor(8);
+            gotoxy(centerX-15,23);
+            cout << "Use W/S to move  |  ENTER to select  |  ESC to quit";
+            needRedraw=false;
+        }
+
+        for(int i=0;i<menu.size();i++){
+            gotoxy(centerX-7,10+i*2);
+            if(i==selection){ setColor(color); cout << "► " << menu[i] << "     "; }
+            else { setColor(7); cout << "  " << menu[i] << "     "; }
+        }
+
+        color++; if(color>14) color=9;
+        Sleep(100);
+
+        CONSOLE_CURSOR_INFO cursorInfo; GetConsoleCursorInfo(console,&cursorInfo);
+        cursorInfo.bVisible=FALSE; SetConsoleCursorInfo(console,&cursorInfo);
+
+        if(_kbhit()){
+            char key=_getch();
+            if(key=='w'||key=='W'){ if(selection>0) selection--; }
+            if(key=='s'||key=='S'){ if(selection<menu.size()-1) selection++; }
+            if(key==13) return selection;
+            if(key==27) return menu.size()-1; // Exit
+        }
+    }
+}
+
+// ---------------- Settings ----------------
+void changeSettings() {
+    int selection = 0;
+    string menu[3] = {"Difficulty", "Sound On/Off", "Back"};
+    while(true) {
+        system("cls");
+        gotoxy(10,2); setColor(14); cout << "⚙ Game Settings ⚙";
+        for(int i=0;i<3;i++){
+            gotoxy(12,5+i*2);
+            if(i==selection){ setColor(11); cout << "► " << menu[i]; }
+            else{ setColor(7); cout << "   " << menu[i]; }
+        }
         char key = _getch();
-        if (key == 'w' || key == 'W') { if(selection>0) selection--; }
-        if (key == 's' || key == 'S') { if(selection<3) selection++; }
-        if (key == 13) return selection; // Enter key
+        if(key=='w'||key=='W') { if(selection>0) selection--; }
+        if(key=='s'||key=='S') { if(selection<2) selection++; }
+        if(key==13) {
+            if(selection==0){
+                int diffSel=0;
+                string diff[3]={"Easy","Medium","Hard"};
+                while(true){
+                    system("cls");
+                    gotoxy(10,2); setColor(14); cout << "Select Difficulty:";
+                    for(int i=0;i<3;i++){
+                        gotoxy(12,5+i*2);
+                        if(i==diffSel) { setColor(11); cout << "► " << diff[i]; }
+                        else { setColor(7); cout << "   " << diff[i]; }
+                    }
+                    char k=_getch();
+                    if(k=='w'||k=='W') { if(diffSel>0) diffSel--; }
+                    if(k=='s'||k=='S') { if(diffSel<2) diffSel++; }
+                    if(k==13){
+                        if(diffSel==0) settings.ballSpeed=35, settings.lives=5;
+                        if(diffSel==1) settings.ballSpeed=25, settings.lives=5;
+                        if(diffSel==2) settings.ballSpeed=15, settings.lives=5;
+                        break;
+                    }
+                    if(k==27) break;
+                }
+            }
+            else if(selection==1){
+                settings.soundOn=!settings.soundOn;
+                gotoxy(10,12); setColor(14);
+                cout << "Sound is now " << (settings.soundOn ? "ON":"OFF") << ".";
+                Sleep(1000);
+            }
+            else if(selection==2) break;
+        }
+        if(key==27) break;
     }
 }
 
 // ---------------- Game Loop ----------------
-void startGame() {
+struct TrailPos{ int x,y,color; };
+
+void startGame(bool resume){
     srand(time(0));
-    int paddleX, ballX, ballY;
-    int ballDirX, ballDirY;
-    int lives, score;
-    float multiplier;
-    int level;
+    int paddleX,ballX,ballY,ballDirX,ballDirY,lives,score,level,bricksLeft;
+    double multiplier;
     vector<vector<int>> bricks;
-    int bricksLeft;
     vector<TrailPos> trail;
 
-    bool gameRunning = true;
+    if(resume && hasSavedGame){
+        level = savedState.level;
+        score = savedState.score;
+        lives = savedState.lives;
+        multiplier = savedState.multiplier;
+        paddleX = savedState.paddleX;
+        ballX = savedState.ballX;
+        ballY = savedState.ballY;
+        ballDirX = savedState.ballDirX;
+        ballDirY = savedState.ballDirY;
+        bricks = savedBricks;
+        bricksLeft = 0;
+        for(auto &r: bricks) for(auto &v: r) if(v>0) bricksLeft++;
+    } else {
+        paddleX=20; ballX=32; ballY=19;
+        ballDirX=(rand()%2==0)?1:-1; ballDirY=-1;
+        lives=settings.lives; score=0; multiplier=1.0; level=1;
+        bricks=vector<vector<int>>(2,vector<int>(10,10)); bricksLeft=20;
+    }
 
-    while(gameRunning) {
-        // Initialize game state
-        paddleX = 20; ballX = 32; ballY = 19;
-        ballDirX = (rand()%2==0)?1:-1; ballDirY=-1;
-        lives = 5; score = 0; multiplier=1.0; level=1;
-        bricks = vector<vector<int>>(2, vector<int>(10,10)); bricksLeft=20;
-        trail.clear();
-        system("cls");
+    trail.clear();
+    system("cls");
+    drawWalls();
+    drawBricks(bricks);
+    setColor(10); gotoxy(paddleX,20); cout<<"======";
+    setColor(12); gotoxy(ballX,ballY); cout<<"O";
+    drawHUD(level,score,multiplier,lives);
 
-        while(lives>0) {
-            // Paddle movement
-            if(GetAsyncKeyState('A') & 0x8000) { if(paddleX>1){ gotoxy(paddleX,20); cout<<"      "; paddleX-=2; } }
-            if(GetAsyncKeyState('D') & 0x8000) { if(paddleX<34){ gotoxy(paddleX,20); cout<<"      "; paddleX+=2; } }
-            if(GetAsyncKeyState(VK_ESCAPE) & 0x8000) return; // manual exit to homepage
+    while(lives>0){
+        if(GetAsyncKeyState('A') & 0x8000){ if(paddleX>1){ gotoxy(paddleX,20); cout<<"      "; paddleX-=2; } }
+        if(GetAsyncKeyState('D') & 0x8000){ if(paddleX<34){ gotoxy(paddleX,20); cout<<"      "; paddleX+=2; } }
 
-            // Ball trail
-            trail.push_back({ballX, ballY, 12});
-            for(int i=0;i<trail.size();i++){
-                gotoxy(trail[i].x, trail[i].y); setColor(trail[i].color); cout << ".";
-                if(trail[i].color>8) trail[i].color--;
-            }
-            if(trail.size()>5){ gotoxy(trail[0].x, trail[0].y); cout << " "; trail.erase(trail.begin()); }
-
-            // Move ball
-            gotoxy(ballX, ballY); cout << " ";
-            ballX += ballDirX; ballY += ballDirY;
-
-            // Wall collision
-            if(ballX<=1){ ballX=1; ballDirX=-ballDirX; Beep(800,30); }
-            if(ballX>=40){ ballX=40; ballDirX=-ballDirX; Beep(800,30); }
-            if(ballY<=1){ ballY=1; ballDirY=-ballDirY; Beep(800,30); }
-
-            // Paddle collision
-            if(ballY>=19 && ballY<=20 && ballX>=paddleX && ballX<=paddleX+5){
-                ballDirY=-ballDirY;
-                int hitPos = ballX-paddleX;
-                if(hitPos<2) ballDirX=-2; else if(hitPos<4) ballDirX=-1;
-                else if(hitPos<5) ballDirX=1; else ballDirX=2;
-                score += int(5*multiplier);
-                Beep(1000,50);
-            }
-
-            // Brick collision
-            for(int y=0;y<2;y++){
-                for(int x=0;x<10;x++){
-                    if(bricks[y][x]>0){
-                        int brickX1=2+x*4, brickX2=brickX1+3;
-                        int brickY1=2+y*2, brickY2=brickY1+1;
-                        if(ballX>=brickX1 && ballX<=brickX2 && ballY>=brickY1 && ballY<=brickY2){
-                            score += int(bricks[y][x]*multiplier);
-                            bricks[y][x]=0;
-                            bricksLeft--;
-                            ballDirY=-ballDirY;
-                            multiplier+=0.1;
-                            setColor(14); gotoxy(brickX1, brickY1); cout << "####";
-                            Beep(1200,30); Sleep(15); gotoxy(brickX1, brickY1); cout << "    ";
-                        }
-                    }
-                }
-            }
-
-            // Ball missed
-            if(ballY>=23){
-                lives--; multiplier=1.0; ballX=20; ballY=19; ballDirX=(rand()%2==0)?1:-1; ballDirY=-1;
-                if(lives <=0){
-                    // Game Over
-                    system("cls"); Sleep(50);
-                    gotoxy(15,8); setColor(12); cout << "GAME OVER!";
-                    gotoxy(15,9); setColor(14); cout << "Final Score: " << score;
-
-                    string playerName;
-                    gotoxy(15,11); setColor(7); cout << "Enter your name: ";
-                    cin >> playerName;
-
-                    updateHighScores(playerName, score);
-
-                    Sleep(1000); // 1 sec delay before auto restart
-                    break; // auto restart game
-                }
-            }
-
-            // Level up
-            if(bricksLeft==0){
-                level++; multiplier=1.0; bricksLeft=20;
-                for(int i=0;i<2;i++) for(int j=0;j<10;j++) bricks[i][j]=(j<5)?10:20;
-                ballX=20; ballY=19; ballDirX=1; ballDirY=-1; paddleX=20;
-                system("cls"); Sleep(50); gotoxy(15,10); setColor(11); cout << "Level " << level << " Start!";
-                Sleep(1000);
+        // Pause / Save
+        if(GetAsyncKeyState('P') & 0x8000){
+            Sleep(150);
+            int psel=0;
+            string pmenu[3] = {"RESUME","SAVE & EXIT","QUIT WITHOUT SAVE"};
+            while(true){
                 system("cls");
+                gotoxy(12,6); setColor(14); cout << "=== GAME PAUSED ===";
+                for(int i=0;i<3;i++){ gotoxy(12,9+i*2); if(i==psel){ setColor(11); cout<<"► "<<pmenu[i]; } else { setColor(7); cout<<"   "<<pmenu[i]; } }
+                gotoxy(12,16); setColor(8); cout << "Use W/S to move | ENTER to select";
+                char k=_getch();
+                if(k=='w'||k=='W'){ if(psel>0) psel--; }
+                if(k=='s'||k=='S'){ if(psel<2) psel++; }
+                if(k==13){
+                    if(psel==0){ system("cls"); drawWalls(); drawBricks(bricks); setColor(10); gotoxy(paddleX,20); cout<<"======"; setColor(12); gotoxy(ballX,ballY); cout<<"O"; drawHUD(level,score,multiplier,lives); break; }
+                    else if(psel==1){
+                        GameState s{level,score,lives,multiplier,paddleX,ballX,ballY,ballDirX,ballDirY};
+                        if(saveGameToFile(s, bricks)){ hasSavedGame = true; savedState = s; savedBricks = bricks; }
+                        system("cls"); gotoxy(12,10); setColor(10); cout << "Game saved. Returning to main menu..."; Sleep(800); return;
+                    } else if(psel==2){ clearSavedGameFile(); system("cls"); gotoxy(12,10); setColor(12); cout << "Progress discarded. Returning to main menu..."; Sleep(800); return; }
+                }
+                if(k==27){ system("cls"); drawWalls(); drawBricks(bricks); setColor(10); gotoxy(paddleX,20); cout<<"======"; setColor(12); gotoxy(ballX,ballY); cout<<"O"; drawHUD(level,score,multiplier,lives); break; }
             }
-
-            // Draw paddle
-            setColor(10); gotoxy(paddleX,20); cout << "======";
-
-            // Draw ball
-            setColor(12); gotoxy(ballX,ballY); cout << "O";
-
-            // Draw walls & bricks
-            drawWalls(); drawBricks(bricks);
-
-            // Draw HUD
-            drawHUD(level,score,multiplier,lives);
-
-            Sleep(25);
         }
+
+        // Ball trail
+        trail.push_back({ballX,ballY,12});
+        for(int i=0;i<trail.size();i++){ gotoxy(trail[i].x,trail[i].y); setColor(trail[i].color); cout<<"."; if(trail[i].color>8) trail[i].color--; }
+        if(trail.size()>5){ gotoxy(trail[0].x,trail[0].y); cout<<" "; trail.erase(trail.begin()); }
+
+        // Move ball
+        gotoxy(ballX,ballY); cout<<" ";
+        ballX += ballDirX; ballY += ballDirY;
+
+        if(ballX<=1){ ballX=1; ballDirX=-ballDirX; if(settings.soundOn) Beep(800,30); }
+        if(ballX>=40){ ballX=40; ballDirX=-ballDirX; if(settings.soundOn) Beep(800,30); }
+        if(ballY<=1){ ballY=1; ballDirY=-ballDirY; if(settings.soundOn) Beep(800,30); }
+
+        if(ballY>=19 && ballY<=20 && ballX>=paddleX && ballX<=paddleX+5){
+            ballDirY=-ballDirY; int hitPos=ballX-paddleX;
+            if(hitPos<2) ballDirX=-2; else if(hitPos<4) ballDirX=-1; else if(hitPos<5) ballDirX=1; else ballDirX=2;
+            score+=int(5*multiplier); if(settings.soundOn) Beep(1000,50);
+        }
+
+        for(int y=0;y<(int)bricks.size();y++){ for(int x=0;x<(int)bricks[0].size();x++){
+            if(bricks[y][x]>0){ int brickX1=2+x*4, brickX2=brickX1+3, brickY1=2+y*2, brickY2=brickY1+1;
+            if(ballX>=brickX1 && ballX<=brickX2 && ballY>=brickY1 && ballY<=brickY2){
+                score+=int(bricks[y][x]*multiplier); bricks[y][x]=0; bricksLeft--; ballDirY=-ballDirY; multiplier+=0.1;
+                setColor(14); gotoxy(brickX1,brickY1); cout<<"####"; if(settings.soundOn) Beep(1200,30); Sleep(15); gotoxy(brickX1,brickY1); cout<<"    ";
+            }}}
+        }
+
+        if(ballY>=23){ lives--; multiplier=1.0; ballX=20; ballY=19; ballDirX=(rand()%2==0)?1:-1; ballDirY=-1;
+            if(lives<=0){ system("cls"); gotoxy(15,8); setColor(12); cout<<"GAME OVER!"; gotoxy(15,9); setColor(14); cout<<"Final Score: "<<score;
+                string playerName; gotoxy(15,11); setColor(7); cout<<"Enter your name: "; cin>>playerName;
+                updateHighScores(playerName,score); Sleep(1000); break;
+            } else { system("cls"); drawWalls(); drawBricks(bricks); setColor(10); gotoxy(paddleX,20); cout<<"======"; setColor(12); gotoxy(ballX,ballY); cout<<"O"; drawHUD(level,score,multiplier,lives); }
+        }
+
+        if(bricksLeft==0){ level++; multiplier=1.0; bricksLeft=20; bricks=vector<vector<int>>(2,vector<int>(10,10)); ballX=20; ballY=19; ballDirX=1; ballDirY=-1; paddleX=20;
+            system("cls"); Sleep(50); gotoxy(15,10); setColor(11); cout<<"Level "<<level<<" Start!"; Sleep(1000); system("cls"); drawWalls(); drawBricks(bricks);
+        }
+
+        setColor(10); gotoxy(paddleX,20); cout<<"======";
+        setColor(12); gotoxy(ballX,ballY); cout<<"O";
+        drawWalls(); drawBricks(bricks); drawHUD(level,score,multiplier,lives);
+        Sleep(settings.ballSpeed);
     }
 }
 
-int main() {
-    loadHighScores(); // Load from file at start
-    while(true) {
+// ---------------- Main ----------------
+int main(){
+    system("chcp 65001 > nul");
+    loadDefaultSettings();
+    loadHighScores();
+    loadSavedGameFromFile();
+
+    while(true){
         int choice = showHomepage();
-        if(choice == 0) startGame();
-        else if(choice == 1){
-            system("cls");
-            cout << "Instructions:\n";
-            cout << "Hold 'A' to move LEFT, 'D' to move RIGHT.\n";
-            cout << "Press ESC to quit.\nBreak bricks for points!\n";
-            cout << "Press any key to return to menu...";
-            _getch();
+
+        // Map choice to action depending on saved game
+        int offset = 0; // because "RESUME" shifts all menu indices by +1
+        if(hasSavedGame){
+            if(choice==0) startGame(true);       // Resume
+            else if(choice==1) startGame(false); // New Game
+            else offset=1;
         }
-        else if(choice == 2){
-            showHighScores();
-        }
-        else if(choice == 3){
-            break; // Exit
-        }
+
+        // Remaining menu options
+        if(choice==0+offset) startGame(false);
+        else if(choice==1+offset){ system("cls"); cout<<"\n\nInstructions:\nHold 'A' to move LEFT, 'D' to move RIGHT.\nPress 'P' to pause & save.\nPress ESC to quit.\n\nPress any key to return..."; _getch(); }
+        else if(choice==2+offset) showHighScores();
+        else if(choice==3+offset) resetHighScores();
+        else if(choice==4+offset) changeSettings();
+        else if(choice==5+offset) break;
     }
     return 0;
 }
